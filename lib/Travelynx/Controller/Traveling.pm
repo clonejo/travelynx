@@ -35,6 +35,8 @@ sub user_status {
 	my $ts   = $self->stash('ts');
 	my $user = $self->get_privacy_by_name($name);
 
+	my $location = $self->app->coordinates_by_station;
+
 	if ( $user and ( $user->{public_level} & 0x02 ) ) {
 		my $status = $self->get_user_status( $user->{id} );
 
@@ -44,6 +46,11 @@ sub user_status {
 			image => $self->url_for('/static/icons/icon-512x512.png')
 			  ->to_abs->scheme('https'),
 		);
+
+		my @station_coordinates;
+		my @station_pairs;
+		my @train_coordinates;
+		my @train_line;
 
 		if (
 			$ts
@@ -67,17 +74,63 @@ sub user_status {
 				$tw_data{description} .= $status->{real_arrival}
 				  ->strftime(' – Ankunft gegen %H:%M Uhr');
 			}
+			if ( exists $location->{ $status->{dep_name} } ) {
+				push( @station_coordinates,
+					[ $location->{ $status->{dep_name} }, $status->{dep_name} ]
+				);
+				if ( $status->{departure_countdown} > 0 ) {
+					@train_coordinates = $location->{ $status->{dep_name} };
+				}
+			}
+			my $prev_station = [ $status->{dep_name} ];
+			for my $station ( @{ $status->{route_after} } ) {
+				my $prev_name    = $prev_station->[0];
+				my $station_name = $station->[0];
+				if (    exists $location->{$prev_name}
+					and exists $location->{$station_name} )
+				{
+					push( @station_pairs,
+						[ $location->{$prev_name}, $location->{$station_name} ]
+					);
+					push( @station_coordinates,
+						[ $location->{$station_name}, $station_name ] );
+					if ( not @train_coordinates and not @train_line ) {
+						if ( ( $station->[1]{rt_arr_countdown} // 0 ) > 0 ) {
+							@train_line = [
+								$location->{$prev_name},
+								$location->{$station_name}
+							];
+						}
+						elsif ( ( $station->[1]{rt_dep_countdown} // 0 ) > 0 ) {
+							@train_coordinates = $location->{$station_name};
+						}
+					}
+				}
+				$prev_station = $station;
+			}
 		}
 		else {
 			$tw_data{title}       = "${name} ist gerade nicht eingecheckt";
 			$tw_data{description} = "Letztes Fahrtziel: $status->{arr_name}";
+			if ( $status->{arr_name}
+				and exists $location->{ $status->{arr_name} } )
+			{
+				push( @station_coordinates,
+					[ $location->{ $status->{arr_name} }, $status->{arr_name} ]
+				);
+			}
 		}
 
 		$self->render(
 			'user_status',
-			name    => $name,
-			journey => $status,
-			twitter => \%tw_data,
+			name                => $name,
+			with_map            => 1,
+			journey             => $status,
+			twitter             => \%tw_data,
+			station_coordinates => \@station_coordinates,
+			station_pairs       => \@station_pairs,
+			marker_coordinates  => \@train_coordinates,
+			marker_lines        => \@train_line,
 		);
 	}
 	else {
@@ -97,8 +150,10 @@ sub public_status_card {
 		my $status = $self->get_user_status( $user->{id} );
 		$self->render(
 			'_public_status_card',
-			name    => $name,
-			journey => $status
+			name                => $name,
+			journey             => $status,
+			station_coordinates => [],
+			station_pairs       => [],
 		);
 	}
 	else {

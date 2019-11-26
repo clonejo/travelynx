@@ -3,3 +3,5 @@
 		%= include '_public_status_card', name => $name, journey => $journey
 	</div>
 </div>
+
+%= include '_map', markers => $marker_coordinates, station_coordinates => $station_coordinates, station_pairs => $station_pairs, blue_routes => $marker_lines
