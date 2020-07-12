@@ -1653,14 +1653,10 @@ sub startup {
 						'Authorization' => "Bearer $token",
 					};
 
-# TODO travelynx tripID != traewelling tripID, as DB trip ids are not exactly constant.
 					my $request = {
 						tripID      => $user->{extra_data}{trip_id},
 						start       => q{} . $user->{dep_eva},
 						destination => q{} . $user->{arr_eva},
-						body        => 'huhu',
-						tweet       => 0,
-						toot        => 0,
 					};
 					my $trip_req = sprintf(
 						"tripID=%s&lineName=%s%%20%s&start=%s",
