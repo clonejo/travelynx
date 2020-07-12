@@ -1662,10 +1662,24 @@ sub startup {
 						tweet       => 0,
 						toot        => 0,
 					};
-					$self->ua->request_timeout(10)
-					  ->post_p(
-						"https://traewelling.de/api/v0/trains/checkin" =>
-						  $header => json => $request )->then(
+					my $trip_req = sprintf(
+						"tripID=%s&lineName=%s%%20%s&start=%s",
+						$user->{extra_data}{trip_id},
+						$user->{train_type},
+						$user->{train_line} // $user->{train_no},
+						$user->{dep_eva}
+					);
+					$self->ua->request_timeout(20)
+					  ->get_p(
+						"https://traewelling.de/api/v0/trains/trip?$trip_req"
+						  => $header )->then(
+						sub {
+							return $self->ua->request_timeout(20)
+							  ->post_p(
+								"https://traewelling.de/api/v0/trains/checkin"
+								  => $header => json => $request );
+						}
+					)->then(
 						sub {
 							my ($tx) = @_;
 							if ( my $err = $tx->error ) {
