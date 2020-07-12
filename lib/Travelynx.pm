@@ -1536,7 +1536,7 @@ sub startup {
 			my $res_h = $self->pg->db->select( 'traewelling', 'data',
 				{ user_id => $uid } )->expand->hash;
 			splice( @{ $res_h->{data}{log} // [] }, 9 );
-			push(
+			unshift(
 				@{ $res_h->{data}{log} },
 				[
 					$self->now->epoch,
