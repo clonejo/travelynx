@@ -798,6 +798,7 @@ sub startup {
 				}
 				if ( not $force ) {
 					$self->run_hook( $uid, 'update' );
+					$self->traewelling_checkin($uid);
 					return ( 1, undef );
 				}
 			}
@@ -913,6 +914,7 @@ sub startup {
 				return ( 0, undef );
 			}
 			$self->run_hook( $uid, 'update' );
+			$self->traewelling_checkin($uid);
 			$self->add_route_timestamps( $uid, $train, 0 );
 			return ( 1, undef );
 		}
@@ -1424,6 +1426,24 @@ sub startup {
 	);
 
 	$self->helper(
+		'get_traewelling' => sub {
+			my ( $self, $uid ) = @_;
+			$uid //= $self->current_user->{id};
+
+			my $res_h
+			  = $self->pg->db->select( 'traewelling_str', '*',
+				{ user_id => $uid } )->expand->hash;
+
+			$res_h->{latest_run} = epoch_to_dt( $res_h->{latest_run_ts} );
+			for my $log_entry ( @{ $res_h->{data}{log} // [] } ) {
+				$log_entry->[0] = epoch_to_dt( $log_entry->[0] );
+			}
+
+			return $res_h;
+		}
+	);
+
+	$self->helper(
 		'set_webhook' => sub {
 			my ( $self, %opt ) = @_;
 
@@ -1469,6 +1489,205 @@ sub startup {
 					url     => $url
 				}
 			);
+		}
+	);
+
+	$self->helper(
+		'mark_trwl_login_p' => sub {
+			my ( $self, %opt ) = @_;
+
+			my $log = [ [ $self->now->epoch, "Erfolgreich angemeldet" ] ];
+
+			return $self->pg->db->insert_p(
+				'traewelling',
+				{
+					user_id   => $opt{uid},
+					email     => $opt{email},
+					push_sync => 0,
+					pull_sync => 0,
+					token     => $opt{token},
+					data      => JSON->new->encode( { log => $log } ),
+				},
+				{
+					on_conflict => \
+'(user_id) do update set email = EXCLUDED.email, token = EXCLUDED.token, push_sync = false, pull_sync = false, data = null, errored = false, latest_run = null'
+				}
+			);
+		}
+	);
+
+	$self->helper(
+		'mark_trwl_logout' => sub {
+			my ( $self, $uid ) = @_;
+
+			$self->pg->db->delete( 'traewelling', { user_id => $uid } );
+		}
+	);
+
+	$self->helper(
+		'mark_trwl_checkin_success' => sub {
+			my ( $self, $uid, $user ) = @_;
+			my $train = sprintf(
+				"%s %s von %s nach %s (%s)",
+				$user->{train_type}, $user->{train_no},
+				$user->{dep_name},   $user->{arr_name},
+				$user->{extra_data}{trip_id}
+			);
+			my $res_h = $self->pg->db->select( 'traewelling', 'data',
+				{ user_id => $uid } )->expand->hash;
+			splice( @{ $res_h->{data}{log} // [] }, 9 );
+			push(
+				@{ $res_h->{data}{log} },
+				[
+					$self->now->epoch,
+					"travelynx → Traewelling: Eingecheckt in $train"
+				]
+			);
+			$self->pg->db->update(
+				'traewelling',
+				{
+					errored    => 0,
+					latest_run => $self->now,
+					data       => JSON->new->encode( $res_h->{data} )
+				},
+				{ user_id => $uid }
+			);
+		}
+	);
+
+	$self->helper(
+		'mark_trwl_checkin_error' => sub {
+			my ( $self, $uid, $user, $error ) = @_;
+			my $train = sprintf(
+				"%s %s von %s nach %s (%s)",
+				$user->{train_type}, $user->{train_no},
+				$user->{dep_name},   $user->{arr_name},
+				$user->{extra_data}{trip_id}
+			);
+			my $res_h = $self->pg->db->select( 'traewelling', 'data',
+				{ user_id => $uid } )->expand->hash;
+			splice( @{ $res_h->{data}{log} // [] }, 9 );
+			push(
+				@{ $res_h->{data}{log} },
+				[
+					$self->now->epoch,
+"travelynx → Traewelling: Checkin-Fehler bei $train: $error"
+				]
+			);
+			$res_h->{data}{error} = $error;
+			$self->pg->db->update(
+				'traewelling',
+				{
+					errored    => 1,
+					latest_run => $self->now,
+					data       => JSON->new->encode( $res_h->{data} )
+				},
+				{ user_id => $uid }
+			);
+		}
+	);
+
+	$self->helper(
+		'trwl_set_sync' => sub {
+			my ( $self, $uid, $push_sync, $pull_sync ) = @_;
+			$self->pg->db->update(
+				'traewelling',
+				{
+					push_sync => $push_sync,
+					pull_sync => $pull_sync
+				},
+				{ user_id => $uid }
+			);
+		}
+	);
+
+	$self->helper(
+		'get_traewelling_push_token' => sub {
+			my ( $self, $uid ) = @_;
+			my $res_h = $self->pg->db->select(
+				'traewelling',
+				['token'],
+				{
+					user_id   => $uid,
+					push_sync => 1
+				}
+			)->hash;
+			if ($res_h) {
+				return $res_h->{token};
+			}
+			return;
+		}
+	);
+
+	$self->helper(
+		'get_traewelling_pull_accounts' => sub {
+			my ($self) = @_;
+			my $res = $self->pg->db->select(
+				'traewelling',
+				[ 'user_id', 'token' ],
+				{ pull_sync => 1 }
+			);
+			my @ret;
+			for my $row ( $res->hashes->each ) {
+				push( @ret, [ $row->{user_id}, $row->{token} ] );
+			}
+			return @ret;
+		}
+	);
+
+	$self->helper(
+		'traewelling_checkin' => sub {
+			my ( $self, $uid ) = @_;
+			if ( my $token = $self->get_traewelling_push_token($uid) ) {
+				my $user = $self->get_user_status;
+				if ( $user->{checked_in} and $user->{extra_data}{trip_id} ) {
+					my $traewelling = $self->get_traewelling($uid);
+					if ( $traewelling->{data}{trip_id} eq
+						$user->{extra_data}{trip_id} )
+					{
+						return;
+					}
+					my $header = {
+						'User-Agent' => 'travelynx/'
+						  . $self->app->config->{version},
+						'Authorization' => "Bearer $token",
+					};
+
+# TODO travelynx tripID != traewelling tripID, as DB trip ids are not exactly constant.
+					my $request = {
+						tripID      => $user->{extra_data}{trip_id},
+						start       => q{} . $user->{dep_eva},
+						destination => q{} . $user->{arr_eva},
+						body        => 'huhu',
+						tweet       => 0,
+						toot        => 0,
+					};
+					$self->ua->request_timeout(10)
+					  ->post_p(
+						"https://traewelling.de/api/v0/trains/checkin" =>
+						  $header => json => $request )->then(
+						sub {
+							my ($tx) = @_;
+							if ( my $err = $tx->error ) {
+								my $err_msg
+								  = "HTTP $err->{code} $err->{message}";
+								$self->mark_trwl_checkin_error( $uid, $user,
+									$err_msg );
+							}
+							else {
+								$self->mark_trwl_checkin_success( $uid, $user );
+
+                      # mark success: checked into (trip_id, start, destination)
+							}
+						}
+					)->catch(
+						sub {
+							my ($err) = @_;
+							$self->mark_trwl_checkin_error( $uid, $user, $err );
+						}
+					)->wait;
+				}
+			}
 		}
 	);
 
@@ -1938,10 +2157,16 @@ sub startup {
 				sub {
 					my ($tx) = @_;
 					my $body = decode( 'utf-8', $tx->res->body );
+					my $json;
 
-					my $json = JSON->new->decode($body);
-					$cache->freeze( $url, $json );
-					$promise->resolve($json);
+					eval { $json = JSON->new->decode($body) };
+					if ($json) {
+						$cache->freeze( $url, $json );
+						$promise->resolve($json);
+					}
+					else {
+						$promise->reject("Invalid JSON");
+					}
 				}
 			)->catch(
 				sub {
@@ -4036,6 +4261,7 @@ sub startup {
 	$authed_r->get('/account')->to('account#account');
 	$authed_r->get('/account/privacy')->to('account#privacy');
 	$authed_r->get('/account/hooks')->to('account#webhook');
+	$authed_r->get('/account/traewelling')->to('traewelling#settings');
 	$authed_r->get('/account/insight')->to('account#insight');
 	$authed_r->get('/ajax/status_card.html')->to('traveling#status_card');
 	$authed_r->get('/cancelled')->to('traveling#cancelled');
@@ -4057,6 +4283,7 @@ sub startup {
 	$authed_r->get('/confirm_mail/:token')->to('account#confirm_mail');
 	$authed_r->post('/account/privacy')->to('account#privacy');
 	$authed_r->post('/account/hooks')->to('account#webhook');
+	$authed_r->post('/account/traewelling')->to('traewelling#settings');
 	$authed_r->post('/account/insight')->to('account#insight');
 	$authed_r->post('/journey/add')->to('traveling#add_journey_form');
 	$authed_r->post('/journey/comment')->to('traveling#comment_form');
