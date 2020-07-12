@@ -1640,6 +1640,9 @@ sub startup {
 			my ( $self, $uid ) = @_;
 			if ( my $token = $self->get_traewelling_push_token($uid) ) {
 				my $user = $self->get_user_status;
+
+# TODO delete previous traewelling status if the train's destination has been changed
+# TODO delete traewelling status when undoing a travelynx checkin
 				if ( $user->{checked_in} and $user->{extra_data}{trip_id} ) {
 					my $traewelling = $self->get_traewelling($uid);
 					if ( $traewelling->{data}{trip_id} eq
@@ -1685,6 +1688,8 @@ sub startup {
 									$err_msg );
 							}
 							else {
+                    # TODO check for traewelling error ("error" key in response)
+                    # TODO store ID of resulting status
 								$self->mark_trwl_checkin_success( $uid, $user );
 
                       # mark success: checked into (trip_id, start, destination)
