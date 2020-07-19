@@ -1689,7 +1689,7 @@ sub startup {
 							}
 							else {
                     # TODO check for traewelling error ("error" key in response)
-                    # TODO store ID of resulting status
+                    # TODO store ID of resulting status (request /user/{name} and store status ID)
 								$self->mark_trwl_checkin_success( $uid, $user );
 
                       # mark success: checked into (trip_id, start, destination)
