@@ -2,6 +2,44 @@ package Travelynx::Controller::Traewelling;
 use Mojo::Base 'Mojolicious::Controller';
 use Mojo::Promise;
 
+sub trwl_getuser_p {
+	my ( $self, $uid, $token ) = @_;
+	my $ua = $self->ua->request_timeout(20);
+
+	my $header = {
+		'User-Agent'    => 'travelynx/' . $self->app->config->{version},
+		'Authorization' => "Bearer $token",
+	};
+	my $promise = Mojo::Promise->new;
+
+	$ua->get_p( "https://traewelling.de/api/v0/getuser" => $header )->then(
+		sub {
+			my ($tx) = @_;
+			if ( my $err = $tx->error ) {
+				my $err_msg = "HTTP $err->{code} $err->{message}";
+				$promise->reject($err_msg);
+			}
+			else {
+				my $user_data = $tx->result->json;
+				$self->mark_trwl_user(
+					uid         => $uid,
+					trwl_id     => $user_data->{id},
+					screen_name => $user_data->{name},
+					user_name   => $user_data->{username},
+				);
+				$promise->resolve;
+			}
+		}
+	)->catch(
+		sub {
+			my ($err) = @_;
+			$promise->reject($err);
+		}
+	)->wait;
+
+	return $promise;
+}
+
 sub trwl_login_p {
 	my ( $self, $uid, $email, $password ) = @_;
 
@@ -15,6 +53,7 @@ sub trwl_login_p {
 	};
 
 	my $promise = Mojo::Promise->new;
+	my $token;
 
 	$ua->post_p(
 		"https://traewelling.de/api/v0/auth/login" => $header => json =>
@@ -26,15 +65,21 @@ sub trwl_login_p {
 				$promise->reject($err_msg);
 			}
 			else {
-				my $token = $tx->result->json->{token};
-				$self->mark_trwl_login_p(
+				$token = $tx->result->json->{token};
+				return $self->mark_trwl_login_p(
 					uid   => $uid,
 					email => $email,
 					token => $token
-				)->then( sub { $promise->resolve } )
-				  ->catch( sub { my ($err) = @_; $promise->reject($err) } )
-				  ->wait;
+				);
 			}
+		}
+	)->then(
+		sub {
+			return $self->trwl_getuser_p( $uid, $token );
+		}
+	)->then(
+		sub {
+			$promise->resolve;
 		}
 	)->catch(
 		sub {
@@ -152,6 +197,9 @@ sub settings {
 			$self->param('push_sync') ? 1 : 0,
 			$self->param('pull_sync') ? 1 : 0
 		);
+		$self->flash( success => 'traewelling' );
+		$self->redirect_to('account');
+		return;
 	}
 
 	my $traewelling = $self->get_traewelling;

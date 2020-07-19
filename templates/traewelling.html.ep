@@ -11,7 +11,9 @@
 				<div class="card success-color">
 					<div class="card-content white-text">
 						<span class="card-title">Traewelling verknüpft</span>
-						<p>Dein travelynx-Account hat nun ein Jahr lang Zugriff auf <b><%= $traewelling->{email} %></b> bei Traewelling</p>
+						% my $user = $traewelling->{data}{user_name} // $traewelling->{email};
+						<p>Dein travelynx-Account hat nun ein Jahr lang Zugriff auf 
+							den Traewelling-Account <b>@<%= $user %></b>.</p>
 					</div>
 				</div>
 			% }
@@ -88,8 +90,14 @@
 	<div class="row">
 		<div class="col s12">
 			<p>
-				Dieser Account ist mit <%= $traewelling->{email} %> auf <a
-				href="https://traewelling.de">Traewelling</a> verknüpft.
+				Dieser travelynx-Account ist mit dem Traewelling-Account
+				% if (my $user = $traewelling->{data}{user_name}) {
+					<a href="https://traewelling.de/profile/<%= $user %>"><%= $user %></a>
+				% }
+				% else {
+					%= $traewelling->{email}
+				% }
+				verknüpft.
 			</p>
 		</div>
 	</div>

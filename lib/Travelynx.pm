@@ -1517,6 +1517,25 @@ sub startup {
 	);
 
 	$self->helper(
+		'mark_trwl_user' => sub {
+			my ( $self, %opt ) = @_;
+
+			my $res_h = $self->pg->db->select( 'traewelling', 'data',
+				{ user_id => $opt{uid} } )->expand->hash;
+
+			$res_h->{data}{user_id}     = $opt{trwl_id};
+			$res_h->{data}{screen_name} = $opt{screen_name};
+			$res_h->{data}{user_name}   = $opt{user_name};
+
+			$self->pg->db->update(
+				'traewelling',
+				{ data    => JSON->new->encode( $res_h->{data} ) },
+				{ user_id => $opt{uid} }
+			);
+		}
+	);
+
+	$self->helper(
 		'mark_trwl_logout' => sub {
 			my ( $self, $uid ) = @_;
 
@@ -1688,8 +1707,8 @@ sub startup {
 									$err_msg );
 							}
 							else {
-                    # TODO check for traewelling error ("error" key in response)
-                    # TODO store ID of resulting status (request /user/{name} and store status ID)
+  # TODO check for traewelling error ("error" key in response)
+  # TODO store ID of resulting status (request /user/{name} and store status ID)
 								$self->mark_trwl_checkin_success( $uid, $user );
 
                       # mark success: checked into (trip_id, start, destination)

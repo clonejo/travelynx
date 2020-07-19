@@ -119,10 +119,10 @@
 						Fehlerhaft <i class="material-icons">error</i>
 					% }
 					% elsif (not ($traewelling->{push_sync} or $traewelling->{pull_sync})) {
-						<span style="color: #999999;">Verknüpft mit <%= $traewelling->{email} %>, Synchronisierung inaktiv</span>
+						<span style="color: #999999;">Verknüpft mit <%= $traewelling->{data}{user_name} // $traewelling->{email} %>, Synchronisierung inaktiv</span>
 					% }
 					% else {
-						Verknüpft mit <%= $traewelling->{email} %>
+						Verknüpft mit <%= $traewelling->{data}{user_name} // $traewelling->{email} %>
 					% }
 				</td>
 			</tr>
