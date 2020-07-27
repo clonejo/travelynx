@@ -16,7 +16,8 @@ sub trwl_getuser_p {
 		sub {
 			my ($tx) = @_;
 			if ( my $err = $tx->error ) {
-				my $err_msg = "HTTP $err->{code} $err->{message}";
+				my $err_msg
+				  = "HTTP $err->{code} $err->{message} bei Abfrage der Nutzerdaten";
 				$promise->reject($err_msg);
 			}
 			else {
@@ -33,7 +34,7 @@ sub trwl_getuser_p {
 	)->catch(
 		sub {
 			my ($err) = @_;
-			$promise->reject($err);
+			$promise->reject("$err bei Abfrage der Nutzerdaten");
 		}
 	)->wait;
 
@@ -61,7 +62,7 @@ sub trwl_login_p {
 		sub {
 			my ($tx) = @_;
 			if ( my $err = $tx->error ) {
-				my $err_msg = "HTTP $err->{code} $err->{message}";
+				my $err_msg = "HTTP $err->{code} $err->{message} bei Login";
 				$promise->reject($err_msg);
 			}
 			else {
