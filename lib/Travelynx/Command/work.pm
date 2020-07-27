@@ -226,13 +226,21 @@ sub run {
 				{
 					return;
 				}
+				# TODO Protokollieren: Letzter behandelter Status ist ID X -> muss nicht nochmal angeschaut werden
 				$self->app->log->debug("... user is checked in:");
 				while ( my ( $k, $v ) = each %{$status} ) {
 					$self->app->log->debug("$k = $v");
 				}
+				my $user = $self->app->get_user_status($traewelling->{user_id});
+				if ($user->{dep_eva} == $status->{dep_eva} and $user->{sched_departure}->epoch == $status->{dep_dt}->epoch) {
+					$self->app->log->debug("... user is also checked in via travelynx. nothing to do.");
+					continue;
+				}
 				my $dep
 				  = $self->app->get_departures( $status->{dep_eva}, 60, 40, 0 );
 				if ( $dep->{errstr} ) {
+					$self->app->trwl_log($traewelling->{user_id},
+						"Fehler bei Traewelling-Status $status->{status_id} ($status->{line} nach $status->{arr_name}): $dep->{errstr}", 1);
 					return;
 				}
 				my $train_id;
@@ -240,7 +248,7 @@ sub run {
 					if ( $train->line ne $status->{line} ) {
 						next;
 					}
-					if ( $train->sched_departure->epoch
+					if ( not $train->sched_departure or $train->sched_departure->epoch
 						!= $status->{dep_dt}->epoch )
 					{
 						next;
@@ -255,6 +263,9 @@ sub run {
 					$train_id = $train->train_id;
 				}
 				if ($train_id) {
+					# TODO Transaktion -> nur committen, wenn checkin und checkout erfolgreich
+					# my $db = $self->app->pg->db;
+					# my $tx = $db->begin;
 					my ( undef, $err )
 					  = $self->app->checkin( $status->{dep_eva}, $train_id,
 						$traewelling->{user_id} );
@@ -262,7 +273,24 @@ sub run {
 						( undef, $err )
 						  = $self->app->checkout( $status->{arr_eva}, 0,
 							$traewelling->{user_id} );
+						if (not $err) {
+							$self->app->trwl_log($traewelling->{user_id},
+								"Traewelling-Status $status->{status_id} übernommen: Eingecheckt in $status->{line} nach $status->{arr_name} (Zug-ID $train_id)", 0);
+							#$tx->commit;
+						}
 					}
+					if ($err) {
+						$self->app->trwl_log($traewelling->{user_id},
+							"Fehler bei Traewelling-Status $status->{status_id} ($status->{line} nach $status->{arr_name}, Zug-ID $train_id): $err", 1);
+					}
+				}
+				else {
+					my $is_error = 0;
+					if ($status->{category} =~ m{^ (?: nationalExpress | regional | suburban ) $ }x) {
+						$is_error = 1;
+					}
+					$self->app->trwl_log($traewelling->{user_id},
+						"Traewelling-Status $status->{status_id} ($status->{line} nach $status->{arr_name}): Kein Zug gefunden", $is_error);
 				}
 			}
 		)->catch(

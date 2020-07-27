@@ -1583,24 +1583,26 @@ sub startup {
 				$user->{dep_name},   $user->{arr_name},
 				$user->{extra_data}{trip_id}
 			);
-			$self->mark_trwl_error( $uid,
-				"travelynx → Traewelling: Checkin-Fehler bei $train: $error"
+			$self->trwl_log( $uid,
+				"travelynx → Traewelling: Checkin-Fehler bei $train: $error", 1
 			);
 		}
 	);
 
 	$self->helper(
-		'mark_trwl_error' => sub {
-			my ( $self, $uid, $error ) = @_;
+		'trwl_log' => sub {
+			my ( $self, $uid, $message, $is_error ) = @_;
 			my $res_h = $self->pg->db->select( 'traewelling', 'data',
 				{ user_id => $uid } )->expand->hash;
 			splice( @{ $res_h->{data}{log} // [] }, 9 );
-			push( @{ $res_h->{data}{log} }, [ $self->now->epoch, $error ] );
-			$res_h->{data}{error} = $error;
+			push( @{ $res_h->{data}{log} }, [ $self->now->epoch, $message ] );
+			if ($is_error) {
+				$res_h->{data}{error} = $message;
+			}
 			$self->pg->db->update(
 				'traewelling',
 				{
-					errored    => 1,
+					errored    => $is_error ? 1 : 0,
 					latest_run => $self->now,
 					data       => JSON->new->encode( $res_h->{data} )
 				},
@@ -1682,6 +1684,7 @@ sub startup {
 								time_zone => 'Europe/Berlin',
 							);
 							my $status_id = $status->{id};
+							my $message = $status->{body};
 							my $checkin_at
 							  = $strp->parse_datetime( $status->{created_at} );
 
@@ -1700,6 +1703,7 @@ sub startup {
 							my $arr_name
 							  = $status->{train_checkin}{destination}{name};
 
+							my $category = $status->{train_checkin}{hafas_trip}{category};
 							my $trip_id
 							  = $status->{train_checkin}{hafas_trip}{trip_id};
 							my $linename
@@ -1709,6 +1713,7 @@ sub startup {
 							$promise->resolve(
 								{
 									status_id  => $status_id,
+									message    => $message,
 									checkin    => $checkin_at,
 									dep_dt     => $dep_dt,
 									dep_eva    => $dep_eva,
@@ -1720,6 +1725,7 @@ sub startup {
 									train_type => $train_type,
 									line       => $linename,
 									line_no    => $train_line,
+									category   => $category,
 								}
 							);
 						}
