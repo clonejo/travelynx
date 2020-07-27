@@ -1583,16 +1583,19 @@ sub startup {
 				$user->{dep_name},   $user->{arr_name},
 				$user->{extra_data}{trip_id}
 			);
+			$self->mark_trwl_error( $uid,
+				"travelynx → Traewelling: Checkin-Fehler bei $train: $error"
+			);
+		}
+	);
+
+	$self->helper(
+		'mark_trwl_error' => sub {
+			my ( $self, $uid, $error ) = @_;
 			my $res_h = $self->pg->db->select( 'traewelling', 'data',
 				{ user_id => $uid } )->expand->hash;
 			splice( @{ $res_h->{data}{log} // [] }, 9 );
-			push(
-				@{ $res_h->{data}{log} },
-				[
-					$self->now->epoch,
-"travelynx → Traewelling: Checkin-Fehler bei $train: $error"
-				]
-			);
+			push( @{ $res_h->{data}{log} }, [ $self->now->epoch, $error ] );
 			$res_h->{data}{error} = $error;
 			$self->pg->db->update(
 				'traewelling',
@@ -1643,14 +1646,93 @@ sub startup {
 			my ($self) = @_;
 			my $res = $self->pg->db->select(
 				'traewelling',
-				[ 'user_id', 'token' ],
+				[ 'user_id', 'token', 'data' ],
 				{ pull_sync => 1 }
 			);
-			my @ret;
-			for my $row ( $res->hashes->each ) {
-				push( @ret, [ $row->{user_id}, $row->{token} ] );
-			}
-			return @ret;
+			return $res->expand->hashes->each;
+		}
+	);
+
+	$self->helper(
+		'traewelling_get_status_p' => sub {
+			my ( $self, $username, $token ) = @_;
+			my $promise = Mojo::Promise->new;
+
+			my $header = {
+				'User-Agent'    => 'travelynx/' . $self->app->config->{version},
+				'Authorization' => "Bearer $token",
+			};
+
+			$self->ua->request_timeout(20)
+			  ->get_p(
+				"https://traewelling.de/api/v0/user/${username}" => $header )
+			  ->then(
+				sub {
+					my ($tx) = @_;
+					if ( my $err = $tx->error ) {
+						my $err_msg = "HTTP $err->{code} $err->{message}";
+						$promise->reject($err);
+					}
+					else {
+						if ( my $status
+							= $tx->result->json->{statuses}{data}[0] )
+						{
+							my $strp = DateTime::Format::Strptime->new(
+								pattern   => '%Y-%m-%d %H:%M:%S',
+								time_zone => 'Europe/Berlin',
+							);
+							my $status_id = $status->{id};
+							my $checkin_at
+							  = $strp->parse_datetime( $status->{created_at} );
+
+							my $dep_dt = $strp->parse_datetime(
+								$status->{train_checkin}{departure} );
+							my $arr_dt = $strp->parse_datetime(
+								$status->{train_checkin}{arrival} );
+
+							my $dep_eva
+							  = $status->{train_checkin}{origin}{ibnr};
+							my $arr_eva
+							  = $status->{train_checkin}{destination}{ibnr};
+
+							my $dep_name
+							  = $status->{train_checkin}{origin}{name};
+							my $arr_name
+							  = $status->{train_checkin}{destination}{name};
+
+							my $trip_id
+							  = $status->{train_checkin}{hafas_trip}{trip_id};
+							my $linename
+							  = $status->{train_checkin}{hafas_trip}{linename};
+							my ( $train_type, $train_line )
+							  = split( qr{ }, $linename );
+							$promise->resolve(
+								{
+									status_id  => $status_id,
+									checkin    => $checkin_at,
+									dep_dt     => $dep_dt,
+									dep_eva    => $dep_eva,
+									dep_name   => $dep_name,
+									arr_dt     => $arr_dt,
+									arr_eva    => $arr_eva,
+									arr_name   => $arr_name,
+									trip_id    => $trip_id,
+									train_type => $train_type,
+									line       => $linename,
+									line_no    => $train_line,
+								}
+							);
+						}
+					}
+				}
+			)->catch(
+				sub {
+					my ($err) = @_;
+					$promise->reject($err);
+				}
+			)->wait;
+
+			return $promise;
 		}
 	);
 

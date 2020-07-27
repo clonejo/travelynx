@@ -214,6 +214,66 @@ sub run {
 		eval { }
 	}
 
+	for my $traewelling ( $self->app->get_traewelling_pull_accounts ) {
+		$self->app->log->debug(
+			"Pulling Traewelling status for UID $traewelling->{user_id}");
+		$self->app->traewelling_get_status_p( $traewelling->{data}{user_name},
+			$traewelling->{token} )->then(
+			sub {
+				my ($status) = @_;
+				if ( not $status->{checkin}
+					or $now->epoch - $status->{checkin}->epoch > 900 )
+				{
+					return;
+				}
+				$self->app->log->debug("... user is checked in:");
+				while ( my ( $k, $v ) = each %{$status} ) {
+					$self->app->log->debug("$k = $v");
+				}
+				my $dep
+				  = $self->app->get_departures( $status->{dep_eva}, 60, 40, 0 );
+				if ( $dep->{errstr} ) {
+					return;
+				}
+				my $train_id;
+				for my $train ( @{ $dep->{results} } ) {
+					if ( $train->line ne $status->{line} ) {
+						next;
+					}
+					if ( $train->sched_departure->epoch
+						!= $status->{dep_dt}->epoch )
+					{
+						next;
+					}
+					if (
+						not List::Util::first { $_ eq $status->{arr_name} }
+						$train->route_post
+					  )
+					{
+						next;
+					}
+					$train_id = $train->train_id;
+				}
+				if ($train_id) {
+					my ( undef, $err )
+					  = $self->app->checkin( $status->{dep_eva}, $train_id,
+						$traewelling->{user_id} );
+					if ( not $err ) {
+						( undef, $err )
+						  = $self->app->checkout( $status->{arr_eva}, 0,
+							$traewelling->{user_id} );
+					}
+				}
+			}
+		)->catch(
+			sub {
+				my ($err) = @_;
+				$self->app->log->warn(
+					"traewelling_get_status_p($traewelling->{user_id}): $err");
+			}
+		)->wait;
+	}
+
 	# Computing yearly stats may take a while, but we've got all time in the
 	# world here. This means users won't have to wait when loading their
 	# own by-year journey log.
