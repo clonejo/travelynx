@@ -411,9 +411,12 @@ sub startup {
 
 	$self->helper(
 		'checkin' => sub {
-			my ( $self, $station, $train_id, $uid ) = @_;
+			my ( $self, %opt ) = @_;
 
-			$uid //= $self->current_user->{id};
+			my $station  = $opt{station};
+			my $train_id = $opt{train_id};
+			my $uid      = $opt{uid} // $self->current_user->{id};
+			my $db       = $opt{db} // $self->pg->db;
 
 			my $status = $self->iris->get_departures(
 				station    => $station,
@@ -442,12 +445,17 @@ sub startup {
 						}
 
 						# Otherwise, someone forgot to check out first
-						$self->checkout( $station, 1, $uid );
+						$self->checkout(
+							station => $station,
+							force   => 1,
+							uid     => $uid,
+							db      => $db
+						);
 					}
 
 					eval {
 						my $json = JSON->new;
-						$self->pg->db->insert(
+						$db->insert(
 							'in_transit',
 							{
 								user_id   => $uid,
@@ -569,10 +577,13 @@ sub startup {
 
 	$self->helper(
 		'checkout' => sub {
-			my ( $self, $station, $force, $uid ) = @_;
+			my ( $self, %opt ) = @_;
 
-			my $db     = $self->pg->db;
-			my $status = $self->iris->get_departures(
+			my $station = $opt{station};
+			my $force   = $opt{force};
+			my $uid     = $opt{uid};
+			my $db      = $opt{db} // $self->pg->db;
+			my $status  = $self->iris->get_departures(
 				station    => $station,
 				lookbehind => 120,
 				lookahead  => 120
@@ -696,6 +707,12 @@ sub startup {
 					$self->run_hook( $uid, 'update' );
 					return ( 1, undef );
 				}
+			}
+
+			if ( $opt{is_traewelling_checkin} ) {
+				$self->run_hook( $uid, 'update' );
+				$self->add_route_timestamps( $uid, $train, 0 );
+				return ( 1, undef );
 			}
 
 			my $has_arrived = 0;
@@ -2334,6 +2351,122 @@ sub startup {
 			}
 
 			return $ret;
+		}
+	);
+
+	$self->helper(
+		'traewelling_to_travelynx' => sub {
+			my ( $self, %opt ) = @_;
+			my $traewelling = $opt{traewelling};
+			my $user_data   = $opt{user_data};
+			my $uid         = $user_data->{user_id};
+
+			if ( not $traewelling->{checkin}
+				or $self->now->epoch - $traewelling->{checkin}->epoch > 900 )
+			{
+				$self->log->debug("... not checked in");
+				return;
+			}
+			if (    $traewelling->{status_id}
+				and $user_data->{data}{latest_pull_status_id}
+				and $traewelling->{status_id}
+				== $user_data->{data}{latest_pull_status_id} )
+			{
+				$self->log->debug("... already handled");
+				return;
+			}
+			$self->log->debug("... checked in");
+			my $user_status = $self->get_user_status($uid);
+			if ( $user_status->{checked_in} ) {
+				$self->log->debug(
+					"... also checked in via travelynx. aborting.");
+				return;
+			}
+			my $dep = $self->iris->get_departures(
+				station    => $traewelling->{dep_eva},
+				lookbehind => 60,
+				lookahead  => 40
+			);
+			if ( $dep->{errstr} ) {
+				$self->traewelling->log(
+					uid => $uid,
+					message =>
+"Fehler bei Status $traewelling->{status_id} ($traewelling->{line} nach $traewelling->{arr_name}): $dep->{errstr}",
+					is_error => 1,
+				);
+				return;
+			}
+			my $train_id;
+			for my $train ( @{ $dep->{results} } ) {
+				if ( $train->line ne $traewelling->{line} ) {
+					next;
+				}
+				if ( not $train->sched_departure
+					or $train->sched_departure->epoch
+					!= $traewelling->{dep_dt}->epoch )
+				{
+					next;
+				}
+				if (
+					not List::Util::first { $_ eq $traewelling->{arr_name} }
+					$train->route_post
+				  )
+				{
+					next;
+				}
+				$train_id = $train->train_id;
+			}
+			if ($train_id) {
+
+      # TODO Transaktion -> nur committen, wenn checkin und checkout erfolgreich
+      # my $db = $self->app->pg->db;
+      # my $tx = $db->begin;
+				$self->log->debug("... found train: $train_id");
+				my ( undef, $err ) = $self->checkin(
+					station  => $traewelling->{dep_eva},
+					train_id => $train_id,
+					uid      => $uid
+				);
+				if ( not $err ) {
+					( undef, $err ) = $self->checkout(
+						station                => $traewelling->{arr_eva},
+						train_id               => 0,
+						uid                    => $uid,
+						is_traewelling_checkin => 1
+					);
+					if ( not $err ) {
+						$self->traewelling->log(
+							uid => $uid,
+							message =>
+"Traewelling-Status $traewelling->{status_id} übernommen: Eingecheckt in $traewelling->{line} nach $traewelling->{arr_name} (Zug-ID $train_id)"
+						);
+
+						#$tx->commit;
+					}
+				}
+				if ($err) {
+					$self->traewelling->log(
+						uid => $uid,
+						message =>
+"Fehler bei Traewelling-Status $traewelling->{status_id} ($traewelling->{line} nach $traewelling->{arr_name}, Zug-ID $train_id): $err",
+						1
+					);
+				}
+			}
+			else {
+				my $is_error = 0;
+				if ( $traewelling->{category}
+					=~ m{^ (?: nationalExpress | regional | suburban ) $ }x )
+				{
+					$is_error = 1;
+				}
+				$self->traewelling->log(
+					uid => $uid,
+					message =>
+"Traewelling-Status $traewelling->{status_id} ($traewelling->{line} nach $traewelling->{arr_name}): Kein Zug gefunden",
+					is_error => $is_error
+				);
+			}
 		}
 	);
 

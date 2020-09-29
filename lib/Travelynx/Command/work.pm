@@ -108,7 +108,11 @@ sub run {
 
                   # check out (adds a cancelled journey and resets journey state
                   # to checkin
-						$self->app->checkout( $arr, 1, $uid );
+						$self->app->checkout(
+							station => $arr,
+							force   => 1,
+							uid     => $uid
+						);
 					}
 				}
 				else {
@@ -201,7 +205,11 @@ sub run {
 					{
                   # check out (adds a cancelled journey and resets journey state
                   # to destination selection)
-						$self->app->checkout( $arr, 0, $uid );
+						$self->app->checkout(
+							station => $arr,
+							force   => 0,
+							uid     => $uid
+						);
 					}
 				}
 				else {
@@ -209,7 +217,11 @@ sub run {
 				}
 			}
 			elsif ( $entry->{real_arr_ts} ) {
-				my ( undef, $error ) = $self->app->checkout( $arr, 1, $uid );
+				my ( undef, $error ) = $self->app->checkout(
+					station => $arr,
+					force   => 1,
+					uid     => $uid
+				);
 				if ($error) {
 					die("${error}\n");
 				}
@@ -220,6 +232,31 @@ sub run {
 		}
 
 		eval { }
+	}
+
+	for my $traewelling ( $self->app->traewelling->get_pull_accounts ) {
+
+		# $traewelling->{user_id} is the travelynx uid
+		# $traewelling->{user_name} is the Träwelling username
+		$self->app->log->debug(
+			"Pulling Traewelling status for UID $traewelling->{user_id}");
+		$self->app->traewelling_api->get_status_p(
+			username => $traewelling->{data}{user_name},
+			token    => $traewelling->{token}
+		)->then(
+			sub {
+				my ($status) = @_;
+				$self->app->traewelling_to_travelynx(
+					traewelling => $status,
+					user_data   => $traewelling
+				);
+			}
+		)->catch(
+			sub {
+				my ($err) = @_;
+				$self->app->log->debug("Error $err");
+			}
+		)->wait;
 	}
 
 	# Computing yearly stats may take a while, but we've got all time in the

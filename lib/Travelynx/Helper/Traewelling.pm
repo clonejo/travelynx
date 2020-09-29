@@ -20,8 +20,11 @@ sub new {
 }
 
 sub get_status_p {
-	my ( $self, $username, $token ) = @_;
-	my $promise = Mojo::Promise->new;
+	my ( $self, %opt ) = @_;
+
+	my $username = $opt{username};
+	my $token    = $opt{token};
+	my $promise  = Mojo::Promise->new;
 
 	my $header = {
 		'User-Agent'    => $self->{header}{'User-Agent'},

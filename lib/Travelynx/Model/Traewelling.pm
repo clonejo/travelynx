@@ -108,7 +108,10 @@ sub log_checkin_success {
 		$user->{dep_name},   $user->{arr_name},
 		$user->{extra_data}{trip_id}
 	);
-	$self->log( $uid, "travelynx → Traewelling: Eingecheckt in $train", 0 );
+	$self->log(
+		uid     => $uid,
+		message => "travelynx → Traewelling: Eingecheckt in $train"
+	);
 }
 
 sub log_checkin_error {
@@ -119,12 +122,19 @@ sub log_checkin_error {
 		$user->{dep_name},   $user->{arr_name},
 		$user->{extra_data}{trip_id}
 	);
-	$self->log( $uid,
-		"travelynx → Traewelling: Checkin-Fehler bei $train: $error", 1 );
+	$self->log(
+		uid => $uid,
+		message =>
+		  "travelynx → Traewelling: Checkin-Fehler bei $train: $error",
+		is_error => 1
+	);
 }
 
 sub log {
-	my ( $self, $uid, $message, $is_error ) = @_;
+	my ( $self, %opt ) = @_;
+	my $uid      = $opt{uid};
+	my $message  = $opt{message};
+	my $is_error = $opt{is_error};
 	my $res_h
 	  = $self->{pg}->db->select( 'traewelling', 'data', { user_id => $uid } )
 	  ->expand->hash;
