@@ -20,7 +20,9 @@ use Travelynx::Helper::DBDB;
 use Travelynx::Helper::HAFAS;
 use Travelynx::Helper::IRIS;
 use Travelynx::Helper::Sendmail;
+use Travelynx::Helper::Traewelling;
 use Travelynx::Model::Journeys;
+use Travelynx::Model::Traewelling;
 use Travelynx::Model::Users;
 use XML::LibXML;
 
@@ -288,6 +290,26 @@ sub startup {
 				realtime_cache => $self->app->cache_iris_rt,
 				root_url       => $self->url_for('/')->to_abs,
 				version        => $self->app->config->{version},
+			);
+		}
+	);
+
+	$self->helper(
+		traewelling => sub {
+			my ($self) = @_;
+			state $trwl = Travelynx::Model::Traewelling->new( pg => $self->pg );
+		}
+	);
+
+	$self->helper(
+		traewelling_api => sub {
+			my ($self) = @_;
+			state $trwl_api = Travelynx::Helper::Traewelling->new(
+				log        => $self->app->log,
+				model      => $self->traewelling,
+				root_url   => $self->url_for('/')->to_abs,
+				user_agent => $self->ua,
+				version    => $self->app->config->{version},
 			);
 		}
 	);
@@ -2647,6 +2669,7 @@ sub startup {
 	$authed_r->get('/account')->to('account#account');
 	$authed_r->get('/account/privacy')->to('account#privacy');
 	$authed_r->get('/account/hooks')->to('account#webhook');
+	$authed_r->get('/account/traewelling')->to('traewelling#settings');
 	$authed_r->get('/account/insight')->to('account#insight');
 	$authed_r->get('/ajax/status_card.html')->to('traveling#status_card');
 	$authed_r->get('/cancelled')->to('traveling#cancelled');
@@ -2668,6 +2691,7 @@ sub startup {
 	$authed_r->get('/confirm_mail/:token')->to('account#confirm_mail');
 	$authed_r->post('/account/privacy')->to('account#privacy');
 	$authed_r->post('/account/hooks')->to('account#webhook');
+	$authed_r->post('/account/traewelling')->to('traewelling#settings');
 	$authed_r->post('/account/insight')->to('account#insight');
 	$authed_r->post('/journey/add')->to('traveling#add_journey_form');
 	$authed_r->post('/journey/comment')->to('traveling#comment_form');
