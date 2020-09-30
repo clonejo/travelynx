@@ -109,7 +109,10 @@ sub log {
 	my $res_h
 	  = $db->select( 'traewelling', 'data', { user_id => $uid } )->expand->hash;
 	splice( @{ $res_h->{data}{log} // [] }, 9 );
-	push( @{ $res_h->{data}{log} }, [ $self->now->epoch, $message ] );
+	unshift(
+		@{ $res_h->{data}{log} },
+		[ $self->now->epoch, $message, $opt{status_id} ]
+	);
 
 	if ($is_error) {
 		$res_h->{data}{error} = $message;

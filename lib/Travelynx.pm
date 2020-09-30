@@ -489,7 +489,7 @@ sub startup {
 							"Checkin($uid): INSERT failed: $@");
 						return ( undef, 'INSERT failed: ' . $@ );
 					}
-					if ( not $opt{is_traewelling_checkin} ) {
+					if ( not $opt{in_transaction} ) {
 
 						# mustn't be called during a transaction
 						$self->add_route_timestamps( $uid, $train, 1 );
@@ -707,27 +707,24 @@ sub startup {
 						);
 					}
 				}
-				if ( not $force and not $opt{is_traewelling_checkin} ) {
+				if ( not $force ) {
 
 					# mustn't be called during a transaction
-					$self->run_hook( $uid, 'update' );
+					if ( not $opt{in_transaction} ) {
+						$self->run_hook( $uid, 'update' );
+					}
 					return ( 1, undef );
 				}
-			}
-
-			if ( $opt{is_traewelling_checkin} ) {
-
-				# mustn't be called during a transaction
-				#$self->run_hook( $uid, 'update' );
-				#$self->add_route_timestamps( $uid, $train, 0 );
-				return ( 1, undef );
 			}
 
 			my $has_arrived = 0;
 
 			eval {
 
-				my $tx = $db->begin;
+				my $tx;
+				if ( not $opt{in_transaction} ) {
+					$tx = $db->begin;
+				}
 
 				if ( defined $train and not $train->arrival and not $force ) {
 					my $train_no = $train->train_no;
@@ -825,7 +822,9 @@ sub startup {
 					);
 				}
 
-				$tx->commit;
+				if ( not $opt{in_transaction} ) {
+					$tx->commit;
+				}
 			};
 
 			if ($@) {
@@ -834,11 +833,15 @@ sub startup {
 			}
 
 			if ( $has_arrived or $force ) {
-				$self->run_hook( $uid, 'checkout' );
+				if ( not $opt{in_transaction} ) {
+					$self->run_hook( $uid, 'checkout' );
+				}
 				return ( 0, undef );
 			}
-			$self->run_hook( $uid, 'update' );
-			$self->add_route_timestamps( $uid, $train, 0 );
+			if ( not $opt{in_transaction} ) {
+				$self->run_hook( $uid, 'update' );
+				$self->add_route_timestamps( $uid, $train, 0 );
+			}
 			return ( 1, undef );
 		}
 	);
@@ -2400,7 +2403,8 @@ sub startup {
 				$self->traewelling->log(
 					uid => $uid,
 					message =>
-"Status $traewelling->{status_id} ($traewelling->{line} nach $traewelling->{arr_name}) ist keine Zugfahrt",
+"$traewelling->{line} nach $traewelling->{arr_name} ist keine Zugfahrt",
+					status_id => $traewelling->{status_id},
 				);
 				$self->traewelling->set_latest_pull_status_id(
 					uid       => $uid,
@@ -2418,12 +2422,13 @@ sub startup {
 				$self->traewelling->log(
 					uid => $uid,
 					message =>
-"Fehler bei Status $traewelling->{status_id} ($traewelling->{line} nach $traewelling->{arr_name}): $dep->{errstr}",
-					is_error => 1,
+"Fehler bei $traewelling->{line} nach $traewelling->{arr_name}: $dep->{errstr}",
+					status_id => $traewelling->{status_id},
+					is_error  => 1,
 				);
 				return;
 			}
-			my $train_id;
+			my ( $train_ref, $train_id );
 			for my $train ( @{ $dep->{results} } ) {
 				if ( $train->line ne $traewelling->{line} ) {
 					next;
@@ -2441,7 +2446,9 @@ sub startup {
 				{
 					next;
 				}
-				$train_id = $train->train_id;
+				$train_id  = $train->train_id;
+				$train_ref = $train;
+				last;
 			}
 			if ($train_id) {
 				$self->log->debug("... found train: $train_id");
@@ -2450,20 +2457,20 @@ sub startup {
 				my $tx = $db->begin;
 
 				my ( undef, $err ) = $self->checkin(
-					station                => $traewelling->{dep_eva},
-					train_id               => $train_id,
-					uid                    => $uid,
-					is_traewelling_checkin => 1,
-					db                     => $db
+					station        => $traewelling->{dep_eva},
+					train_id       => $train_id,
+					uid            => $uid,
+					in_transaction => 1,
+					db             => $db
 				);
 
 				if ( not $err ) {
 					( undef, $err ) = $self->checkout(
-						station                => $traewelling->{arr_eva},
-						train_id               => 0,
-						uid                    => $uid,
-						is_traewelling_checkin => 1,
-						db                     => $db
+						station        => $traewelling->{arr_eva},
+						train_id       => 0,
+						uid            => $uid,
+						in_transaction => 1,
+						db             => $db
 					);
 					if ( not $err ) {
 						$self->log->debug("... success!");
@@ -2476,7 +2483,8 @@ sub startup {
 							uid => $uid,
 							db  => $db,
 							message =>
-"Träwelling-Status $traewelling->{status_id} übernommen: Eingecheckt in $traewelling->{line} nach $traewelling->{arr_name}",
+"Eingecheckt in $traewelling->{line} nach $traewelling->{arr_name}",
+							status_id => $traewelling->{status_id},
 						);
 						$self->traewelling->set_latest_pull_status_id(
 							uid       => $uid,
@@ -2492,8 +2500,9 @@ sub startup {
 					$self->traewelling->log(
 						uid => $uid,
 						message =>
-"Fehler bei Träwelling-Status $traewelling->{status_id} ($traewelling->{line} nach $traewelling->{arr_name}): $err",
-						is_error => 1
+"Fehler bei $traewelling->{line} nach $traewelling->{arr_name}: $err",
+						status_id => $traewelling->{status_id},
+						is_error  => 1
 					);
 				}
 			}
@@ -2501,8 +2510,9 @@ sub startup {
 				$self->traewelling->log(
 					uid => $uid,
 					message =>
-"Träwelling-Status $traewelling->{status_id} ($traewelling->{line} nach $traewelling->{arr_name}): Zug nicht gefunden",
-					is_error => 1
+"$traewelling->{line} nach $traewelling->{arr_name} nicht gefunden",
+					status_id => $traewelling->{status_id},
+					is_error  => 1
 				);
 			}
 		}

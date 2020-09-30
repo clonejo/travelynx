@@ -206,7 +206,13 @@
 		<div class="col s12"">
 			<ul>
 				% for my $log_entry (@{$traewelling->{data}{log} // []}) {
-					<li><%= $log_entry->[0]->strftime('%d.%m.%Y %H:%M:%S') %> – <%= $log_entry->[1] %></li>
+					<li>
+						<%= $log_entry->[0]->strftime('%d.%m.%Y %H:%M:%S') %> –
+						% if ($log_entry->[2]) {
+							Träwelling <a href="https://traewelling.de/status/<%= $log_entry->[2] %>">#<%= $log_entry->[2] %></a> –
+						% }
+						%= $log_entry->[1]
+					</li>
 				% }
 			</ul>
 		</div>
