@@ -234,21 +234,21 @@ sub run {
 		eval { }
 	}
 
-	for my $traewelling ( $self->app->traewelling->get_pull_accounts ) {
+	for my $account_data ( $self->app->traewelling->get_pull_accounts ) {
 
-		# $traewelling->{user_id} is the travelynx uid
-		# $traewelling->{user_name} is the Träwelling username
+		# $account_data->{user_id} is the travelynx uid
+		# $account_data->{user_name} is the Träwelling username
 		$self->app->log->debug(
-			"Pulling Traewelling status for UID $traewelling->{user_id}");
+			"Pulling Traewelling status for UID $account_data->{user_id}");
 		$self->app->traewelling_api->get_status_p(
-			username => $traewelling->{data}{user_name},
-			token    => $traewelling->{token}
+			username => $account_data->{data}{user_name},
+			token    => $account_data->{token}
 		)->then(
 			sub {
-				my ($status) = @_;
+				my ($traewelling) = @_;
 				$self->app->traewelling_to_travelynx(
-					traewelling => $status,
-					user_data   => $traewelling
+					traewelling => $traewelling,
+					user_data   => $account_data
 				);
 			}
 		)->catch(
@@ -269,6 +269,8 @@ sub run {
 			year => $now->year
 		);
 	}
+
+	# TODO wait until all background jobs have terminated
 }
 
 1;

@@ -100,56 +100,63 @@ sub get {
 	return $res_h;
 }
 
-sub log_checkin_success {
-	my ( $self, $uid, $user ) = @_;
-	my $train = sprintf(
-		"%s %s von %s nach %s (%s)",
-		$user->{train_type}, $user->{train_no},
-		$user->{dep_name},   $user->{arr_name},
-		$user->{extra_data}{trip_id}
-	);
-	$self->log(
-		uid     => $uid,
-		message => "travelynx → Traewelling: Eingecheckt in $train"
-	);
-}
-
-sub log_checkin_error {
-	my ( $self, $uid, $user, $error ) = @_;
-	my $train = sprintf(
-		"%s %s von %s nach %s (%s)",
-		$user->{train_type}, $user->{train_no},
-		$user->{dep_name},   $user->{arr_name},
-		$user->{extra_data}{trip_id}
-	);
-	$self->log(
-		uid => $uid,
-		message =>
-		  "travelynx → Traewelling: Checkin-Fehler bei $train: $error",
-		is_error => 1
-	);
-}
-
 sub log {
 	my ( $self, %opt ) = @_;
 	my $uid      = $opt{uid};
 	my $message  = $opt{message};
 	my $is_error = $opt{is_error};
+	my $db       = $opt{db} // $self->{pg}->db;
 	my $res_h
-	  = $self->{pg}->db->select( 'traewelling', 'data', { user_id => $uid } )
-	  ->expand->hash;
+	  = $db->select( 'traewelling', 'data', { user_id => $uid } )->expand->hash;
 	splice( @{ $res_h->{data}{log} // [] }, 9 );
 	push( @{ $res_h->{data}{log} }, [ $self->now->epoch, $message ] );
+
 	if ($is_error) {
 		$res_h->{data}{error} = $message;
 	}
-	$self->{pg}->db->update(
+	$db->update(
 		'traewelling',
 		{
 			errored    => $is_error ? 1 : 0,
 			latest_run => $self->now,
 			data       => JSON->new->encode( $res_h->{data} )
 		},
+		{ user_id => $uid }
+	);
+}
+
+sub set_latest_pull_status_id {
+	my ( $self, %opt ) = @_;
+	my $uid       = $opt{uid};
+	my $status_id = $opt{status_id};
+	my $db        = $opt{db} // $self->{pg}->db;
+
+	my $res_h
+	  = $db->select( 'traewelling', 'data', { user_id => $uid } )->expand->hash;
+
+	$res_h->{data}{latest_pull_status_id} = $status_id;
+
+	$db->update(
+		'traewelling',
+		{ data    => JSON->new->encode( $res_h->{data} ) },
+		{ user_id => $uid }
+	);
+}
+
+sub set_latest_push_status_id {
+	my ( $self, %opt ) = @_;
+	my $uid       = $opt{uid};
+	my $status_id = $opt{status_id};
+	my $db        = $opt{db} // $self->{pg}->db;
+
+	my $res_h
+	  = $db->select( 'traewelling', 'data', { user_id => $uid } )->expand->hash;
+
+	$res_h->{data}{latest_push_status_id} = $status_id;
+
+	$db->update(
+		'traewelling',
+		{ data    => JSON->new->encode( $res_h->{data} ) },
 		{ user_id => $uid }
 	);
 }
@@ -171,20 +178,14 @@ sub set_sync {
 	);
 }
 
-sub get_push_token {
-	my ( $self, $uid ) = @_;
-	my $res_h = $self->{pg}->db->select(
+sub get_push_accounts {
+	my ($self) = @_;
+	my $res = $self->{pg}->db->select(
 		'traewelling',
-		['token'],
-		{
-			user_id   => $uid,
-			push_sync => 1
-		}
-	)->hash;
-	if ($res_h) {
-		return $res_h->{token};
-	}
-	return;
+		[ 'user_id', 'token', 'data' ],
+		{ push_sync => 1 }
+	);
+	return $res->expand->hashes->each;
 }
 
 sub get_pull_accounts {

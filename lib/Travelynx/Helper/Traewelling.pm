@@ -44,8 +44,8 @@ sub get_status_p {
 			else {
 				if ( my $status = $tx->result->json->{statuses}{data}[0] ) {
 					my $strp = DateTime::Format::Strptime->new(
-						pattern   => '%Y-%m-%d %H:%M:%S',
-						time_zone => 'Europe/Berlin',
+						pattern   => '%Y-%m-%dT%H:%M:%S.000000Z',
+						time_zone => 'UTC',
 					);
 					my $status_id = $status->{id};
 					my $message   = $status->{body};
